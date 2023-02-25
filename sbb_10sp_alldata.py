@@ -203,9 +203,10 @@ def calculate_gt_CCCs(r):
     r: roadrunner object of model
     Returns CCCs for sink reaction
     """
-    for sp in r.getBoundarySpeciesId():
+    target = None
+    for sp in r.getBoundarySpeciesIds():
         if r.getValue(sp) == 0:
-            target = sp[1:]
+            target = 'S'+str(sp[1:])
     r.steadyState()
     return r.getScaledConcentrationControlCoefficientMatrix()[target]
 
@@ -237,19 +238,17 @@ def plot_ADVI_converg(approx, iter, results_dir):
 
 def elasticities_to_csv(trace, e_labels, results_dir):
 
-    
-    ex = np.reshape(trace['posterior']['Ex'].to_numpy(), (len(trace), -1))
-    ey = np.reshape(trace['posterior']['Ey'].to_numpy(), (len(trace), -1))
-    e_all = np.hstack([ex, ey])
-
-
+    Ex_hdi = az.hdi(trace['posterior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)
+    Ey_hdi = az.hdi(trace['posterior']['Ey'])['Ey'].to_numpy() #(13, 2, 2)
+    ex = Ex_hdi.reshape((Ex_hdi.shape[0]*Ex_hdi.shape[1],-1))
+    ey = Ey_hdi.reshape((Ey_hdi.shape[0]*Ey_hdi.shape[1],-1))
+    e_all = np.transpose(np.vstack([ex, ey]))
+    e_df_vi = pd.DataFrame(e_all, columns=e_labels)
 
     print(e_labels)
     print((trace['posterior']['Ex'].to_numpy()).shape)
     print((trace['posterior']['Ey'].to_numpy()).shape)
-    #e_df_vi = pd.DataFrame(e_all, columns=e_labels)
-    #elasticities_vi = e_df_vi.apply(pm.hpd)
-    #elasticities_vi.to_csv(results_dir + '-elasticities.csv')
+    e_df_vi.to_csv(results_dir + '-elasticities.csv')
 
 
 def plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name):
@@ -311,6 +310,9 @@ def analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     dataset_name: str description of filepath
     Return nothing. 
     """
+    postEx = np.squeeze(trace['posterior']['Ex'].to_numpy()) # (1000, 13, 8)
+    postEy = np.squeeze(trace['posterior']['Ey'].to_numpy()) # (1000, 13, 2)
+
     fcc_mb = np.array([ll.flux_control_coefficient(Ex=ex) for ex in trace['posterior']['Ex'].to_numpy()]) # ADVI
     fcc_prior = np.array([ll.flux_control_coefficient(Ex=ex) for ex in trace_prior['prior']['Ex'].to_numpy()])
     
