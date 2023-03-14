@@ -18,6 +18,8 @@ pd.set_option
 ('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 
+from csv import writer
+
 # math/stats
 import scipy
 import scipy.stats
@@ -177,13 +179,17 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     results_dir = './' + folder_name + 'results/'
     dataset_name = dataPath.split(".")[0]
 
-    #plot_ADVI_converg(approx, itr, results_dir + 'convergence/', dataset_name)
+    plot_ADVI_converg(approx, itr, results_dir + 'convergence/', dataset_name)
     
-    priorEx, Ex_hdi, Ey_hdi = calculate_elasticities_hdi(trace, trace_prior)
-    #elasticities_to_csv(Ex_hdi, Ey_hdi, e_labels, results_dir + 'elast-hpd/' + dataset_name)
-    #plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
-    #analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name)
-    #analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name)
+    elasticities_to_csv(trace, e_labels, results_dir + 'elast-hpd/' + dataset_name)
+    plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
+
+    mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, model, ll, results_dir + f'MCC-hdi/{dataset_name}-MCC_hdi.csv')
+    plot_CC_distbs(mcc_df, 'mcc', r, results_dir, dataset_name)
+    
+    fcc_df = ADVI_CCs_hdi(trace, trace_prior, 'fcc', r, model, ll, results_dir + f'FCC-hdi/{dataset_name}-FCC_hdi.csv')
+    plot_CC_distbs(fcc_df, 'fcc', r, results_dir, dataset_name)
+    
 
 def calculate_gt_FCCs(r):
     """
@@ -236,18 +242,9 @@ def plot_ADVI_converg(approx, itr, results_dir, dataset_name):
         plt.savefig(results_dir + dataset_name + '-convergence.svg', transparent=True, dpi=200)
 
 
-def calculate_elasticities_hdi(trace, trace_prior):
-
+def elasticities_to_csv(trace, e_labels, results_dir):
     Ex_hdi = az.hdi(trace['posterior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)
     Ey_hdi = az.hdi(trace['posterior']['Ey'])['Ey'].to_numpy() #(13, 2, 2)
-
-    priorEx_hdi = az.hdi(trace_prior['prior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)
-
-    return Ex_hdi, Ey_hdi, priorEx_hdi
-
-
-def elasticities_to_csv(Ex_hdi, Ey_hdi, e_labels, results_dir):
-
     ex = Ex_hdi.reshape((Ex_hdi.shape[0]*Ex_hdi.shape[1],-1))
     ey = Ey_hdi.reshape((Ey_hdi.shape[0]*Ey_hdi.shape[1],-1))
     e_all = np.transpose(np.vstack([ex, ey]))
@@ -313,36 +310,60 @@ def plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name
     plt.savefig(results_dir + 'elast-plot/' + f'{dataset_name}-plotted_elasticities.svg', transparent=True)
 
 
-def ADVI_MCCs_hdi(Ex_hdi, priorEx_hdi):
+def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir):
     """
     Ex_hdi is the hdi of the posterior Ex trace as a numpy array
     """
+    Ex_hdi = az.hdi(trace['posterior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)
+    Ey_hdi = az.hdi(trace['posterior']['Ey'])['Ey'].to_numpy() #(13, 2, 2)
+
+    priorEx_hdi = az.hdi(trace_prior['prior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)Ex_hdi = az.hdi(trace['posterior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)
+    
     a = np.transpose(Ex_hdi,(2, 0, 1))
     b = np.transpose(priorEx_hdi,(2, 0, 1))
-    mcc_mb = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in a])   
-    mcc_prior = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in b]) 
 
-    df2 = pd.DataFrame(mcc_mb[:, 0], columns=[r.id for r in model.reactions]
-                  ).stack().reset_index(level=1)
-    df3 = pd.DataFrame(mcc_prior[:, 0], columns=[r.id for r in model.reactions]
+    if cc_type=='mcc':
+        cc_mb = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in a])   
+        cc_prior = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in b]) 
+        gt_ccs = calculate_gt_MCCs(r) 
+    elif cc_type=='fcc':
+        cc_mb = np.array([ll.flux_control_coefficient(Ex=ex) for ex in a])   
+        cc_prior = np.array([ll.flux_control_coefficient(Ex=ex) for ex in b]) 
+        gt_ccs = calculate_gt_FCCs(r)
+    else: 
+        raise Exception("cc_type must either be 'mcc' or 'fcc'")
+
+    df2 = pd.DataFrame(cc_mb[:, 0], columns=[r.id for r in model.reactions]
+                    ).stack().reset_index(level=1)
+    df3 = pd.DataFrame(cc_prior[:, 0], columns=[r.id for r in model.reactions]
                     ).stack().reset_index(level=1)
     df2['type'] = 'ADVI'
     df3['type'] = 'Prior'
 
-    mcc_df = pd.concat([df2, df3])
-    mcc_df.columns = ['Reaction', 'mcc', 'Type']
+    cc_df = pd.concat([df2, df3])
+    cc_df.columns = ['Reaction', cc_type, 'Type']
 
-    mcc_df.loc[mcc_df.mcc < -.5, 'mcc'] = np.nan
-    mcc_df.loc[mcc_df.mcc > 1.5, 'mcc'] = np.nan
-    medians = list()
-    
+    cc_hdi = pd.pivot_table(cc_df.reset_index(), values=cc_type, index =['Type', 'index'], columns='Reaction')
+
+    column_order = r.getReactionIds()
+    cc_hdi = cc_hdi.reindex(column_order, axis=1)
+    cc_hdi.to_csv(results_dir)
+
+    medians = []
     for e in r.getReactionIds(): # what is this line doing
         vals = df2[df2['level_1'] == e]
         vals.columns = ['_', 'val', '__']
         medians.append(vals['val'].median())
-    median_df = pd.DataFrame(medians, index=r.getReactionIds())
 
-def analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name):
+    with open(results_dir, 'a') as f:
+        writer(f).writerow(['median',''] + medians)
+        writer(f).writerow(['ground truth',''] + gt_ccs)
+        f.close()
+
+    return cc_df
+    
+    
+def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name):
     """
     objective: 
     Parameters---
@@ -355,38 +376,13 @@ def analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     dataset_name: str description of filepath
     Return nothing. 
     """
-    priorEx = np.squeeze(trace_prior['prior']['Ex'].to_numpy()) # (500, 17, 17)
-    postEx = np.squeeze(trace['posterior']['Ex'].to_numpy()) # (1000, 17, 17)
-    # postEy = np.squeeze(trace['posterior']['Ey'].to_numpy()) # 
-
+    if cc_type=='mcc':
+        gt_ccs = calculate_gt_MCCs(r) 
+    elif cc_type=='fcc':
+        gt_ccs = calculate_gt_FCCs(r) 
+    else: 
+        raise Exception("cc_type must either be 'mcc' or 'fcc'")
     
-    mcc_mb = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in postEx])   
-    mcc_prior = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in priorEx]) 
-    
-    df2 = pd.DataFrame(mcc_mb[:, 0], columns=[r.id for r in model.reactions]
-                  ).stack().reset_index(level=1)
-    df3 = pd.DataFrame(mcc_prior[:, 0], columns=[r.id for r in model.reactions]
-                    ).stack().reset_index(level=1)
-
-    df2['type'] = 'ADVI'
-    df3['type'] = 'Prior'
-
-    mcc_df = pd.concat([df2, df3])
-    mcc_df.columns = ['Reaction', 'mcc', 'Type']
-
-    mcc_df.loc[mcc_df.mcc < -.5, 'mcc'] = np.nan
-    mcc_df.loc[mcc_df.mcc > 1.5, 'mcc'] = np.nan
-
-    medians = list()
-    
-    for e in r.getReactionIds(): # what is this line doing
-        vals = df2[df2['level_1'] == e]
-        vals.columns = ['_', 'val', '__']
-        medians.append(vals['val'].median())
-    median_df = pd.DataFrame(medians, index=r.getReactionIds())
-    median_df.to_csv(results_dir + 'mcc-median/' + f'{dataset_name}-median_MCCs.csv')
-
-    # plot 
     fig = plt.figure(figsize=(16, 8))
 
     my_pal = {"Prior": ".8", "ADVI":"b"}
@@ -395,7 +391,7 @@ def analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     ax2 = fig.add_subplot(111, frameon=False, sharex=ax, sharey=ax)
 
     sns.violinplot(
-        x='Reaction', y='mcc', hue='Type', data=mcc_df[mcc_df.Type == 'Prior'],
+        x='Reaction', y=cc_type, hue='Type', data=cc_df[cc_df.Type == 'Prior'],
         scale='width', width=0.5, legend=False, zorder=0,
         color='1.', ax=ax, saturation=1., alpha=0.01)
 
@@ -403,13 +399,11 @@ def analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     plt.setp(ax.collections, alpha=.5, label="")
 
     sns.violinplot(
-        x='Reaction', y='mcc', hue='Type', data=mcc_df,
+        x='Reaction', y=cc_type, hue='Type', data=cc_df,
         scale='width', width=0.8, hue_order=['ADVI'],
         legend=False, palette=my_pal, zorder=3, ax=ax2)
 
-    gt_mccs = calculate_gt_MCCs(r) 
-
-    for i, cc in enumerate(gt_mccs):
+    for i, cc in enumerate(gt_ccs):
         l = plt.plot([i - .4, i + .4], [cc, cc], '-', color=sns.color_palette('muted')[3])
 
     phandles, plabels = ax.get_legend_handles_labels()
@@ -418,100 +412,14 @@ def analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     ax2.legend().remove()
 
     ax2.legend(phandles + handles + l, plabels + labels + ['Ground Truth'], loc='upper center', ncol=4, fontsize=13)
-    ax.set_ylim([-1, 2])
+    ax.set_ylim([-1.5, 1.5])
 
     ax.axhline(0, ls='--', color='.7', zorder=0)
     sns.despine(trim=True)
 
-    plt.suptitle(dataset_name + 'Predicted MCCs', y=1)
+    plt.suptitle(dataset_name + f'Predicted {cc_type.upper()}s', y=1)
 
-    fig.savefig(results_dir + 'mcc-graph/' + f'{dataset_name}-plotted_MCCs.svg', transparent=True)
-
-
-def analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name):
-    """
-    objective: 
-    Parameters---
-    trace: 
-    trace_prior: 
-    ll: emll linlog object
-    r: roadrunner object of model
-    model: cobrapy object of model
-    results_dir: filepath str for where result should go
-    dataset_name: str description of filepath
-    Return nothing. 
-    """
-    priorEx = np.squeeze(trace_prior['prior']['Ex'].to_numpy()) # (500, 17, 17)
-    postEx = np.squeeze(trace['posterior']['Ex'].to_numpy()) # (1000, 17, 17)
-    # postEy = np.squeeze(trace['posterior']['Ey'].to_numpy()) # 
-
-    
-    fcc_mb = np.array([ll.flux_control_coefficient(Ex=ex) for ex in postEx])   
-    fcc_prior = np.array([ll.flux_control_coefficient(Ex=ex) for ex in priorEx]) 
-    
-    df2 = pd.DataFrame(fcc_mb[:, 0], columns=[r.id for r in model.reactions]
-                  ).stack().reset_index(level=1)
-    df3 = pd.DataFrame(fcc_prior[:, 0], columns=[r.id for r in model.reactions]
-                    ).stack().reset_index(level=1)
-
-    df2['type'] = 'ADVI'
-    df3['type'] = 'Prior'
-
-    fcc_df = pd.concat([df2, df3])
-    fcc_df.columns = ['Reaction', 'FCC', 'Type']
-
-    fcc_df.loc[fcc_df.FCC < -.5, 'FCC'] = np.nan
-    fcc_df.loc[fcc_df.FCC > 1.5, 'FCC'] = np.nan
-
-    medians = list()
-    
-    for e in r.getReactionIds(): # what is this line doing
-        vals = df2[df2['level_1'] == e]
-        vals.columns = ['_', 'val', '__']
-    medians.append(vals['val'].median())
-    median_df = pd.DataFrame(medians)
-    median_df.to_csv(results_dir + 'FCC-median/' + f'{dataset_name}-median_FCCs.csv')
-
-    # plot 
-    fig = plt.figure(figsize=(16, 8))
-
-    my_pal = {"Prior": ".8", "ADVI":"b"}
-
-    ax = fig.add_subplot(111)
-    ax2 = fig.add_subplot(111, frameon=False, sharex=ax, sharey=ax)
-
-    sns.violinplot(
-        x='Reaction', y='FCC', hue='Type', data=fcc_df[fcc_df.Type == 'Prior'],
-        scale='width', width=0.5, legend=False, zorder=0,
-        color='1.', ax=ax, saturation=1., alpha=0.01)
-
-    plt.setp(ax.lines, color='.8')
-    plt.setp(ax.collections, alpha=.5, label="")
-
-    sns.violinplot(
-        x='Reaction', y='FCC', hue='Type', data=fcc_df,
-        scale='width', width=0.8, hue_order=['ADVI'],
-        legend=False, palette=my_pal, zorder=3, ax=ax2)
-
-    gt_FCCs = calculate_gt_FCCs(r) 
-
-    for i, cc in enumerate(gt_FCCs):
-        l = plt.plot([i - .4, i + .4], [cc, cc], '-', color=sns.color_palette('muted')[3])
-
-    phandles, plabels = ax.get_legend_handles_labels()
-    handles, labels = ax2.get_legend_handles_labels()
-    ax.legend().remove()
-    ax2.legend().remove()
-
-    ax2.legend(phandles + handles + l, plabels + labels + ['Ground Truth'], loc='upper center', ncol=4, fontsize=13)
-    ax.set_ylim([-1, 2])
-
-    ax.axhline(0, ls='--', color='.7', zorder=0)
-    sns.despine(trim=True)
-
-    plt.suptitle(dataset_name + 'Predicted FCCs', y=1)
-
-    fig.savefig(results_dir + 'FCC-graph/' + f'{dataset_name}-plotted_FCCs.svg', transparent=True)
+    fig.savefig(results_dir + f'{cc_type.upper()}-graph/{dataset_name}-plotted_{cc_type}s.svg', transparent=True)
 
 
 
