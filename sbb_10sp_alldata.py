@@ -62,7 +62,7 @@ def locateData(passlist, folder_name='./'):
     return datasets
 
 
-def run_analysis(path, dataPath, iter=30000, folder_name="./"):
+def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     
     r = te.loads(folder_name + 'sbml/' + path)
     model = cobra.io.read_sbml_model(folder_name + 'sbml/' + path)
@@ -155,7 +155,7 @@ def run_analysis(path, dataPath, iter=30000, folder_name="./"):
     # sampling
     with pymc_model:
         approx = pm.ADVI()
-        hist = approx.fit(n=iter, obj_optimizer=pm.adagrad_window(learning_rate=5E-3), obj_n_mc=1)
+        hist = approx.fit(n=itr, obj_optimizer=pm.adagrad_window(learning_rate=5E-3), obj_n_mc=1)
     
     with pymc_model:
         trace = hist.sample(1000)    
@@ -177,13 +177,13 @@ def run_analysis(path, dataPath, iter=30000, folder_name="./"):
     results_dir = './' + folder_name + 'results/'
     dataset_name = dataPath.split(".")[0]
 
-    plot_ADVI_converg(approx, iter, results_dir + 'convergence/' + dataset_name)
+    #plot_ADVI_converg(approx, itr, results_dir + 'convergence/', dataset_name)
     
-    elasticities_to_csv(trace, e_labels, results_dir + 'elast-hpd/' + dataset_name)
-    # plot_elasticities(trace, results_dir)
-    calculate_gt_CCCs(r)
-    analyze_ADVI_FCCs(trace, trace_prior, ll, model, results_dir, dataset_name)
-
+    priorEx, Ex_hdi, Ey_hdi = calculate_elasticities_hdi(trace, trace_prior)
+    #elasticities_to_csv(Ex_hdi, Ey_hdi, e_labels, results_dir + 'elast-hpd/' + dataset_name)
+    #plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
+    #analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name)
+    #analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name)
 
 def calculate_gt_FCCs(r):
     """
@@ -196,7 +196,7 @@ def calculate_gt_FCCs(r):
     return r.getScaledFluxControlCoefficientMatrix()[-1]
 
 
-def calculate_gt_CCCs(r):
+def calculate_gt_MCCs(r):
     """
     objective: directly calculates the CCCs of model
     Parameters
@@ -211,12 +211,12 @@ def calculate_gt_CCCs(r):
     return r.getScaledConcentrationControlCoefficientMatrix()[target]
 
 
-def plot_ADVI_converg(approx, iter, results_dir):
+def plot_ADVI_converg(approx, itr, results_dir, dataset_name):
     """
     objective: to plot the convergence of samples from ADVI 
     Parameters
     approx: the ADVI fitting
-    iter: how many times to run ADVI
+    itr: how many times to run ADVI
     results_dir: filepath of where to deposit r
     Returns nothing. Deposits an svg file of convergence plot 
     """
@@ -226,28 +226,32 @@ def plot_ADVI_converg(approx, iter, results_dir):
         plt.plot(approx.hist + 30, '.', rasterized=True, ms=1)
         plt.yscale("log")
         # plt.ylim([1E5, 1E11])
-        plt.xlim([0, iter])
+        plt.xlim([0, itr])
         sns.despine(trim=True, offset=10)
 
         plt.ylabel('-ELBO')
         plt.xlabel('Iteration')
-        plt.title('in vitro ADVI convergence')
+        plt.title(f'{dataset_name} ADVI convergence')
         plt.tight_layout()
-        plt.savefig(results_dir + '-convergence.svg', transparent=True, dpi=200)
+        plt.savefig(results_dir + dataset_name + '-convergence.svg', transparent=True, dpi=200)
 
 
-def elasticities_to_csv(trace, e_labels, results_dir):
+def calculate_elasticities_hdi(trace, trace_prior):
 
     Ex_hdi = az.hdi(trace['posterior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)
     Ey_hdi = az.hdi(trace['posterior']['Ey'])['Ey'].to_numpy() #(13, 2, 2)
+
+    priorEx_hdi = az.hdi(trace_prior['prior']['Ex'])['Ex'].to_numpy() #(13, 8, 2)
+
+    return Ex_hdi, Ey_hdi, priorEx_hdi
+
+
+def elasticities_to_csv(Ex_hdi, Ey_hdi, e_labels, results_dir):
+
     ex = Ex_hdi.reshape((Ex_hdi.shape[0]*Ex_hdi.shape[1],-1))
     ey = Ey_hdi.reshape((Ey_hdi.shape[0]*Ey_hdi.shape[1],-1))
     e_all = np.transpose(np.vstack([ex, ey]))
     e_df_vi = pd.DataFrame(e_all, columns=e_labels)
-
-    print(e_labels)
-    print((trace['posterior']['Ex'].to_numpy()).shape)
-    print((trace['posterior']['Ey'].to_numpy()).shape)
     e_df_vi.to_csv(results_dir + '-elasticities.csv')
 
 
@@ -260,22 +264,33 @@ def plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name
     zero_inds = np.where(e_flat == 0)[0]
     e_sign = np.sign(e_flat[nonzero_inds])
     flat_indexer = np.hstack([nonzero_inds, zero_inds]).argsort()
-    identifiable_elasticies = (np.diff(pm.hpd(trace['posterior']['ex_kinetic_entries'])) < .75).flatten()
-    elast_nonzero = pd.DataFrame((trace['posterior']['ex_kinetic_entries'] * e_sign)[:, identifiable_elasticies],
-                             columns=e_labels[nonzero_inds][identifiable_elasticies])
-    null = pd.DataFrame(pm.hpd(trace['posterior']['ex_capacity_entries']))
-    sig = np.sign(null)[0] == np.sign(null)[1]
-    elast_zero = pd.DataFrame(trace['posterior']['ex_capacity_entries'][:, sig], columns=e_labels[zero_inds[sig]])
-    elast_posterior = elast_nonzero.iloc[:, elast_nonzero.mean().argsort()].join(elast_zero)
-    elast_prior = pd.DataFrame(np.reshape(trace_prior['prior']['Ex'].to_numpy(),(500, -1)), columns=e_labels).reindex(columns=elast_posterior.columns)
 
-    fig = plt.figure(figsize=(4, 3.5))
+    exKinent = trace['posterior']['ex_kinetic_entries']
+    exCapent = trace['posterior']['ex_capacity_entries']
+    
+    identifiable_elasticies = np.diff(az.hdi(exKinent)['ex_kinetic_entries'].to_numpy() < .75).flatten()
+    
+    elast_nonzero = pd.DataFrame((np.squeeze(exKinent.to_numpy()) * e_sign)[:, identifiable_elasticies],
+                             columns=e_labels[nonzero_inds][identifiable_elasticies])
+    null = pd.DataFrame(az.hdi(exCapent)['ex_capacity_entries'].to_numpy())
+    sig = np.sign(null)[0] == np.sign(null)[1]
+
+    elast_zero = pd.DataFrame(np.squeeze(exCapent.to_numpy())[:, sig], columns=e_labels[zero_inds[sig]])
+    elast_posterior = elast_nonzero.iloc[:, elast_nonzero.mean().argsort()].join(elast_zero)
+
+    prior_Es = np.dstack((np.squeeze(trace_prior['prior']['Ex'].to_numpy()), np.squeeze(trace_prior['prior']['Ey'].to_numpy())))
+        
+    elast_prior = pd.DataFrame(np.reshape(prior_Es, (500, -1)), columns=e_labels)# .reindex(columns=elast_posterior.columns)
+
+    fig = plt.figure(figsize=(20, 16))
     ax = fig.add_subplot(111)
 
     _ = sns.boxplot(data=elast_posterior, fliersize=0, ax=ax, zorder=2)
+    
+    prior_c = '0.7'
     _ = sns.boxplot(data=elast_prior, fliersize=0, zorder=0, showmeans=False,
-                    capprops=dict(color='.9', zorder=0), medianprops=dict(color='.9', zorder=0.5),
-                    whiskerprops=dict(color='.9', zorder=0), boxprops=dict(color='.9', facecolor='w', zorder=0), ax=ax)
+                    capprops=dict(color=prior_c, zorder=0), medianprops=dict(color=prior_c, zorder=0.5),
+                    whiskerprops=dict(color=prior_c, zorder=0), boxprops=dict(color=prior_c, facecolor='w', zorder=0), ax=ax)
 
     _ = ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
     ax.axhline(0, ls='--', color='.5', zorder=1)
@@ -294,7 +309,123 @@ def plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name
         tick.label.set_fontsize(18) 
 
     plt.tight_layout()
+    plt.title(f'{dataset_name} Predicted Elasticities')
     plt.savefig(results_dir + 'elast-plot/' + f'{dataset_name}-plotted_elasticities.svg', transparent=True)
+
+
+def ADVI_MCCs_hdi(Ex_hdi, priorEx_hdi):
+    """
+    Ex_hdi is the hdi of the posterior Ex trace as a numpy array
+    """
+    a = np.transpose(Ex_hdi,(2, 0, 1))
+    b = np.transpose(priorEx_hdi,(2, 0, 1))
+    mcc_mb = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in a])   
+    mcc_prior = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in b]) 
+
+    df2 = pd.DataFrame(mcc_mb[:, 0], columns=[r.id for r in model.reactions]
+                  ).stack().reset_index(level=1)
+    df3 = pd.DataFrame(mcc_prior[:, 0], columns=[r.id for r in model.reactions]
+                    ).stack().reset_index(level=1)
+    df2['type'] = 'ADVI'
+    df3['type'] = 'Prior'
+
+    mcc_df = pd.concat([df2, df3])
+    mcc_df.columns = ['Reaction', 'mcc', 'Type']
+
+    mcc_df.loc[mcc_df.mcc < -.5, 'mcc'] = np.nan
+    mcc_df.loc[mcc_df.mcc > 1.5, 'mcc'] = np.nan
+    medians = list()
+    
+    for e in r.getReactionIds(): # what is this line doing
+        vals = df2[df2['level_1'] == e]
+        vals.columns = ['_', 'val', '__']
+        medians.append(vals['val'].median())
+    median_df = pd.DataFrame(medians, index=r.getReactionIds())
+
+def analyze_ADVI_MCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name):
+    """
+    objective: 
+    Parameters---
+    trace: 
+    trace_prior: 
+    ll: emll linlog object
+    r: roadrunner object of model
+    model: cobrapy object of model
+    results_dir: filepath str for where result should go
+    dataset_name: str description of filepath
+    Return nothing. 
+    """
+    priorEx = np.squeeze(trace_prior['prior']['Ex'].to_numpy()) # (500, 17, 17)
+    postEx = np.squeeze(trace['posterior']['Ex'].to_numpy()) # (1000, 17, 17)
+    # postEy = np.squeeze(trace['posterior']['Ey'].to_numpy()) # 
+
+    
+    mcc_mb = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in postEx])   
+    mcc_prior = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in priorEx]) 
+    
+    df2 = pd.DataFrame(mcc_mb[:, 0], columns=[r.id for r in model.reactions]
+                  ).stack().reset_index(level=1)
+    df3 = pd.DataFrame(mcc_prior[:, 0], columns=[r.id for r in model.reactions]
+                    ).stack().reset_index(level=1)
+
+    df2['type'] = 'ADVI'
+    df3['type'] = 'Prior'
+
+    mcc_df = pd.concat([df2, df3])
+    mcc_df.columns = ['Reaction', 'mcc', 'Type']
+
+    mcc_df.loc[mcc_df.mcc < -.5, 'mcc'] = np.nan
+    mcc_df.loc[mcc_df.mcc > 1.5, 'mcc'] = np.nan
+
+    medians = list()
+    
+    for e in r.getReactionIds(): # what is this line doing
+        vals = df2[df2['level_1'] == e]
+        vals.columns = ['_', 'val', '__']
+        medians.append(vals['val'].median())
+    median_df = pd.DataFrame(medians, index=r.getReactionIds())
+    median_df.to_csv(results_dir + 'mcc-median/' + f'{dataset_name}-median_MCCs.csv')
+
+    # plot 
+    fig = plt.figure(figsize=(16, 8))
+
+    my_pal = {"Prior": ".8", "ADVI":"b"}
+
+    ax = fig.add_subplot(111)
+    ax2 = fig.add_subplot(111, frameon=False, sharex=ax, sharey=ax)
+
+    sns.violinplot(
+        x='Reaction', y='mcc', hue='Type', data=mcc_df[mcc_df.Type == 'Prior'],
+        scale='width', width=0.5, legend=False, zorder=0,
+        color='1.', ax=ax, saturation=1., alpha=0.01)
+
+    plt.setp(ax.lines, color='.8')
+    plt.setp(ax.collections, alpha=.5, label="")
+
+    sns.violinplot(
+        x='Reaction', y='mcc', hue='Type', data=mcc_df,
+        scale='width', width=0.8, hue_order=['ADVI'],
+        legend=False, palette=my_pal, zorder=3, ax=ax2)
+
+    gt_mccs = calculate_gt_MCCs(r) 
+
+    for i, cc in enumerate(gt_mccs):
+        l = plt.plot([i - .4, i + .4], [cc, cc], '-', color=sns.color_palette('muted')[3])
+
+    phandles, plabels = ax.get_legend_handles_labels()
+    handles, labels = ax2.get_legend_handles_labels()
+    ax.legend().remove()
+    ax2.legend().remove()
+
+    ax2.legend(phandles + handles + l, plabels + labels + ['Ground Truth'], loc='upper center', ncol=4, fontsize=13)
+    ax.set_ylim([-1, 2])
+
+    ax.axhline(0, ls='--', color='.7', zorder=0)
+    sns.despine(trim=True)
+
+    plt.suptitle(dataset_name + 'Predicted MCCs', y=1)
+
+    fig.savefig(results_dir + 'mcc-graph/' + f'{dataset_name}-plotted_MCCs.svg', transparent=True)
 
 
 def analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_name):
@@ -310,11 +441,13 @@ def analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     dataset_name: str description of filepath
     Return nothing. 
     """
-    postEx = np.squeeze(trace['posterior']['Ex'].to_numpy()) # (1000, 13, 8)
-    postEy = np.squeeze(trace['posterior']['Ey'].to_numpy()) # (1000, 13, 2)
+    priorEx = np.squeeze(trace_prior['prior']['Ex'].to_numpy()) # (500, 17, 17)
+    postEx = np.squeeze(trace['posterior']['Ex'].to_numpy()) # (1000, 17, 17)
+    # postEy = np.squeeze(trace['posterior']['Ey'].to_numpy()) # 
 
-    fcc_mb = np.array([ll.flux_control_coefficient(Ex=ex) for ex in trace['posterior']['Ex'].to_numpy()]) # ADVI
-    fcc_prior = np.array([ll.flux_control_coefficient(Ex=ex) for ex in trace_prior['prior']['Ex'].to_numpy()])
+    
+    fcc_mb = np.array([ll.flux_control_coefficient(Ex=ex) for ex in postEx])   
+    fcc_prior = np.array([ll.flux_control_coefficient(Ex=ex) for ex in priorEx]) 
     
     df2 = pd.DataFrame(fcc_mb[:, 0], columns=[r.id for r in model.reactions]
                   ).stack().reset_index(level=1)
@@ -331,8 +464,9 @@ def analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     fcc_df.loc[fcc_df.FCC > 1.5, 'FCC'] = np.nan
 
     medians = list()
-    for r in e.columns.values: # what is this line doing
-        vals = df2[df2['level_1'] == r]
+    
+    for e in r.getReactionIds(): # what is this line doing
+        vals = df2[df2['level_1'] == e]
         vals.columns = ['_', 'val', '__']
     medians.append(vals['val'].median())
     median_df = pd.DataFrame(medians)
@@ -375,7 +509,7 @@ def analyze_ADVI_FCCs(trace, trace_prior, ll, r, model, results_dir, dataset_nam
     ax.axhline(0, ls='--', color='.7', zorder=0)
     sns.despine(trim=True)
 
-    plt.suptitle(dataset_name, y=1)
+    plt.suptitle(dataset_name + 'Predicted FCCs', y=1)
 
     fig.savefig(results_dir + 'FCC-graph/' + f'{dataset_name}-plotted_FCCs.svg', transparent=True)
 
