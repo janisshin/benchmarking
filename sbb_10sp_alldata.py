@@ -355,9 +355,9 @@ def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir):
         vals.columns = ['_', 'val', '__']
         medians.append(vals['val'].median())
 
-    with open(results_dir, 'a') as f:
+    with open(results_dir, 'a', newline='') as f:
         writer(f).writerow(['median',''] + medians)
-        writer(f).writerow(['ground truth',''] + gt_ccs)
+        writer(f).writerow(['ground truth',''] + gt_ccs.tolist())
         f.close()
 
     return cc_df
