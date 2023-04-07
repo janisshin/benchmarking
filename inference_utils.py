@@ -97,7 +97,7 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     y = data[y_cols]
     v = data[v_cols]
 
-    ref_ind = 0 ## corresponds to how the data was generated
+    ref_ind = data.idxmax()[y_cols[-1]] ## corresponds to how the data was generated
 
     e_star = e.iloc[ref_ind].values
     x_star = x.iloc[ref_ind].values
@@ -142,7 +142,9 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
         
         # Error priors. 
         v_err = pm.HalfNormal('v_error', sigma=0.05, initval=.1)
-        x_err = pm.HalfNormal('x_error', sigma=0.05, initval=.1) # shape must match so that pm.Normal() runs successfully
+        x_err = pm.HalfNormal('x_error', sigma=0.05, initval=.1)
+        y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
+        e_err = pm.HalfNormal('e_error', sigma=0.05, initval=.01)
 
         # Calculate steady-state concentrations and fluxes from elasticities
         chi_ss, v_hat_ss = ll.steady_state_aesara(Ex_t, Ey_t, en, yn)
@@ -151,6 +153,8 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
         
         v_hat_obs = pm.Normal('v_hat_obs', mu=v_hat_ss, sigma=v_err, observed=vn) # both bn and v_hat_ss are (28,6)
         chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=x_err,  observed=xn) # chi_ss and xn is (28,4)
+        y_obs = pm.Normal('y_obs', mu=yn,  sigma=y_err)
+        e_obs = pm.Normal('e_obs', mu=en,  sigma=e_err)
 
         trace_prior = pm.sample_prior_predictive() 
     
