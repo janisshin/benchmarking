@@ -14,8 +14,7 @@ np.random.seed(0)
 np.set_printoptions(threshold=sys.maxsize)
 
 import pandas as pd
-pd.set_option
-('display.max_columns', None)
+pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 
 from csv import writer
@@ -66,30 +65,22 @@ def locateData(passlist, folder_name='./'):
 
 def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     
-    r = te.loads(folder_name + 'sbml/' + path)
-    model = cobra.io.read_sbml_model(folder_name + 'sbml/' + path)
-
-    ex_list = [i.id for i in list(model.reactions) if 'EX' in i.id]
-    model.remove_reactions(ex_list)
-
-    removable_mets = [i for i in list(model.metabolites) if 'B' in i.id]
-    # if removable_mets in a reaction, write down the name of the reaction
-    # this code assumes that there will only be one source and one sink
-    ex_sp_rxns = [list(model.metabolites.get_by_id(m.id).reactions)[0].id for m in removable_mets]
-    for met in removable_mets:
-        model.remove_metabolites(met)
+    r = te.loada(folder_name + 'antimony/' + path)
+    with open("temp.txt", "w") as f:
+        f.write(r.getSBML())
     
+    model = cobra.io.read_sbml_model("temp.txt")
     # return r, model
     data = pd.read_csv(folder_name + 'generated_data/' + dataPath).astype(float)
 
     N = r.getFullStoichiometryMatrix()
     nm, nr = N.shape
-    
+
     n_exp = len(data)   
 
     e_cols = [col for col in data.columns if 'E' in col]
     x_cols = r.getFloatingSpeciesIds()    
-    y_cols = [col for col in r.getBoundarySpeciesIds()]
+    y_cols = [col for col in data.columns if 'B' in col]
     v_cols = [col for col in data.columns if 'flux' in col]
 
     e = data[e_cols]
@@ -97,7 +88,12 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     y = data[y_cols]
     v = data[v_cols]
 
-    ref_ind = data.idxmax()[y_cols[-1]] ## corresponds to how the data was generated
+    # the reference index is the strain that produces the most of a desired product
+    # here, we arbitrarily choose the random 
+    ref_strain = y_cols[-1]
+    ref_ind = data.idxmax()[ref_strain] ## corresponds to how the data was generated
+    exSp = [i.id for i in model.reactions if 'EX' in i.id]
+    target_rxn_i = model.reactions.index([i for i in exSp if y_cols[-1][1:] == i[4:]][0])
 
     e_star = e.iloc[ref_ind].values
     x_star = x.iloc[ref_ind].values
@@ -108,26 +104,26 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     y_star[y_star == 0] = 1e-6
 
     # Normalize to reference values (and drop trivial measurement)
-    en = e.values / e_star
-    xn = x.values / x_star
-    yn = y.values / y_star
-    vn = v.values / v_star[ref_ind]
+    en = e.divide(e_star)
+    xn = x.divide(x_star)
+    yn = y.divide(y_star)
+    vn = v.divide(v_star)
+
+    en = en.drop(ref_ind)
+    xn = xn.drop(ref_ind)
+    yn = yn.drop(ref_ind)
+    vn = vn.drop(ref_ind)    
 
     N[:, v_star < 0] = -1 * N[:, v_star < 0]
     v_star = np.abs(v_star)
 
-    # for some reason, there are 21 reactions in the model
-    # there should only be 19
     Ex = emll.create_elasticity_matrix(model)
-
     Ey = np.zeros((nr, len(y_cols))) # (reactions, number of external species)
     
-    # external species reaction number--the reaction number where the external species appears? (list)
-    ex_sp_rxn_ns = [i[1:] for i in ex_sp_rxns]
-
-    # for each external species:    
-    for i in range(len(removable_mets)): 
-        Ey[int(ex_sp_rxn_ns[i]), i] = 1
+    # external species reaction indices
+    exSp = [model.reactions.index(i.id) for i in model.reactions if 'EX' in i.id]
+    for i in range(len(exSp)): 
+        Ey[int(exSp[i]), i] = 1
 
     ll = emll.LinLogLeastNorm(N, Ex, Ey, v_star)
 
@@ -137,24 +133,25 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
         # Initialize elasticities
         Ex_t = pm.Deterministic('Ex', initialize_elasticity(N, 'ex', b=0.05, sd=1, alpha=5))
         Ey_t = pm.Deterministic('Ey', initialize_elasticity(-Ey.T, 'ey', b=0.05, sd=1, alpha=5))
-            
+
     with pymc_model:
         
         # Error priors. 
         v_err = pm.HalfNormal('v_error', sigma=0.05, initval=.1)
         x_err = pm.HalfNormal('x_error', sigma=0.05, initval=.1)
         y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
-        e_err = pm.HalfNormal('e_error', sigma=0.05, initval=.01)
+        e_err = pm.HalfNormal('e_error', sigma=10, initval=.01)
 
         # Calculate steady-state concentrations and fluxes from elasticities
-        chi_ss, v_hat_ss = ll.steady_state_aesara(Ex_t, Ey_t, en, yn)
+        chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en.to_numpy(), yn)
+        y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en.to_numpy(), xn)
 
         # Error distributions for observed steady-state concentrations and fluxes
         
-        v_hat_obs = pm.Normal('v_hat_obs', mu=v_hat_ss, sigma=v_err, observed=vn) # both bn and v_hat_ss are (28,6)
+        v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_y, sigma=v_err, observed=vn) # both bn and v_hat_ss are (28,6)
         chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=x_err,  observed=xn) # chi_ss and xn is (28,4)
-        y_obs = pm.Normal('y_obs', mu=yn,  sigma=y_err)
-        e_obs = pm.Normal('e_obs', mu=en,  sigma=e_err)
+        y_obs = pm.Normal('y_obs', mu=y_ss,  sigma=y_err, observed=yn)
+        e_obs = pm.Normal('e_obs', mu=0,  sigma=e_err, observed=en)
 
         trace_prior = pm.sample_prior_predictive() 
     
@@ -170,7 +167,7 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     # label
     m_labels = [m.id for m in model.metabolites]
     r_labels = [r.id for r in model.reactions]
-    y_labels = removable_mets
+    y_labels = y_cols
 
     ex_labels = np.array([['$\epsilon_{' + '{0},{1}'.format(rlabel, mlabel) + '}$'
                         for mlabel in m_labels] for rlabel in r_labels]).flatten()
@@ -186,10 +183,10 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     plot_ADVI_converg(approx, itr, results_dir + 'convergence/', dataset_name)
     
     elasticities_to_csv(trace, e_labels, results_dir + 'elast-hdi/' + dataset_name)
-    plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
+    # plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
 
-    mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, model, ll, results_dir + f'MCC-hdi/{dataset_name}-MCC_hdi.csv')
-    plot_CC_distbs(mcc_df, 'mcc', r, results_dir, dataset_name)
+    mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, model, ll, results_dir + f'MCC-hdi/{dataset_name}-MCC_hdi.csv', target_rxn_i=target_rxn_i)
+    plot_CC_distbs(mcc_df, 'mcc', r, results_dir, dataset_name, target_rxn_i=target_rxn_i)
     
     fcc_df = ADVI_CCs_hdi(trace, trace_prior, 'fcc', r, model, ll, results_dir + f'FCC-hdi/{dataset_name}-FCC_hdi.csv')
     plot_CC_distbs(fcc_df, 'fcc', r, results_dir, dataset_name)
@@ -206,19 +203,15 @@ def calculate_gt_FCCs(r):
     return r.getScaledFluxControlCoefficientMatrix()[-1]
 
 
-def calculate_gt_MCCs(r):
+def calculate_gt_MCCs(r, target_rxn_i):
     """
     objective: directly calculates the CCCs of model
     Parameters
     r: roadrunner object of model
     Returns CCCs for sink reaction
     """
-    target = None
-    for sp in r.getBoundarySpeciesIds():
-        if r.getValue(sp) == 0:
-            target = 'S'+str(sp[1:])
     r.steadyState()
-    return r.getScaledConcentrationControlCoefficientMatrix()[target]
+    return r.getScaledConcentrationControlCoefficientMatrix()[:, target_rxn_i]
 
 
 def plot_ADVI_converg(approx, itr, results_dir, dataset_name):
@@ -314,7 +307,7 @@ def plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name
     plt.savefig(results_dir + 'elast-plot/' + f'{dataset_name}-plotted_elasticities.svg', transparent=True)
 
 
-def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir):
+def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir, target_rxn_i=None):
     """
     Ex_hdi is the hdi of the posterior Ex trace as a numpy array
     """
@@ -329,7 +322,7 @@ def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir):
     if cc_type=='mcc':
         cc_mb = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in a])   
         cc_prior = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in b]) 
-        gt_ccs = calculate_gt_MCCs(r) 
+        gt_ccs = calculate_gt_MCCs(r, target_rxn_i) 
     elif cc_type=='fcc':
         cc_mb = np.array([ll.flux_control_coefficient(Ex=ex) for ex in a])   
         cc_prior = np.array([ll.flux_control_coefficient(Ex=ex) for ex in b]) 
@@ -367,7 +360,7 @@ def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir):
     return cc_df
     
     
-def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name):
+def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name, target_rxn_i=None):
     """
     objective: 
     Parameters---
@@ -381,7 +374,7 @@ def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name):
     Return nothing. 
     """
     if cc_type=='mcc':
-        gt_ccs = calculate_gt_MCCs(r) 
+        gt_ccs = calculate_gt_MCCs(r, target_rxn_i) 
     elif cc_type=='fcc':
         gt_ccs = calculate_gt_FCCs(r) 
     else: 
