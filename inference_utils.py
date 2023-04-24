@@ -40,8 +40,7 @@ import arviz as az
 import emll
 from emll.util import initialize_elasticity
 
-
-#####################################################################
+######################################################################
 
 def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     """
@@ -56,12 +55,14 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
 
     model = cobra.io.read_sbml_model("temp.txt")
     os.remove("temp.txt") 
-    
+
     # return r, model
     if noise: 
-        data = pd.read_csv(folder_name + 'noisy_generated_data/' + dataPath).astype(float)
+        data = pd.read_csv(folder_name + 'noisy_generated_data/' + 
+                           dataPath).astype(float)
     else: 
-        data = pd.read_csv(folder_name + 'generated_data/' + dataPath).astype(float)
+        data = pd.read_csv(folder_name + 'generated_data/' + 
+                           dataPath).astype(float)
 
     N = r.getFullStoichiometryMatrix()
     nm, nr = N.shape
@@ -78,13 +79,18 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     y = data[y_cols]
     v = data[v_cols]
 
-    # the reference index is the strain that produces the most of a desired product
-    # here, we arbitrarily choose a random species as our desired product
-    desired_product = y_cols[-1] # the desired product
-    ref_ind = data.idxmax()[desired_product] # the index at which the level of desired product is highest
-    exSp = [i.id for i in model.reactions if 'EX' in i.id] # list of boundary reactions
-    target_rxn = [i for i in exSp if desired_product[1:] == i[4:]][0]
-    target_rxn_i = model.reactions.index(target_rxn) # the index of the reaction which produces the desired product
+    # the reference index is the strain that produces the most of a 
+    # desired product here, we arbitrarily choose a random species as 
+    # our desired product
+    target_rxn_i = -1
+    desired_product = y_cols[target_rxn_i] # the boundary form of the desired product
+    # the strain index at which the level of desired product is highest
+    ref_ind = data.idxmax()[desired_product] 
+    # list of boundary reactions
+    exRxns = [i.id for i in model.reactions if 'EX' in i.id] 
+    # boundary reaction that produces desired product
+    target_rxn = [i for i in exRxns if desired_product[1:] == i[4:]][0]
+    desired_product = target_rxn[3:] # the internal form of the desired product
         
     e_star = e.iloc[ref_ind].values
     x_star = x.iloc[ref_ind].values
@@ -105,7 +111,6 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     yn = yn.drop(ref_ind)
     vn = vn.drop(ref_ind)    
 
-
     if noise:
         model.objective = target_rxn
         for i, rxn in enumerate(model.reactions):
@@ -120,7 +125,6 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
                 model.reactions.get_by_id(rxn.id).lower_bound = v_star[i] * 2        
         sol = model.optimize()
         v_star = sol.fluxes.values
-
 
     N[:, v_star < 0] = -1 * N[:, v_star < 0]
     v_star = np.abs(v_star)
@@ -193,14 +197,17 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     elasticities_to_csv(trace, e_labels, results_dir + 'elast-hdi/' + dataset_name)
     # plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
 
-    mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, model, ll, results_dir + f'MCC-hdi/{dataset_name}-MCC_hdi.csv', target_rxn_i=target_rxn_i)
-    plot_CC_distbs(mcc_df, 'mcc', r, results_dir, dataset_name, target_rxn_i=target_rxn_i)
+    mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, model, ll, results_dir + 
+                          f'MCC-hdi/{dataset_name}-MCC_hdi.csv', 
+                          cc_indexer=desired_product)
+    plot_CC_distbs(mcc_df, 'mcc', r, results_dir, dataset_name, cc_indexer=desired_product)
     
-    fcc_df = ADVI_CCs_hdi(trace, trace_prior, 'fcc', r, model, ll, results_dir + f'FCC-hdi/{dataset_name}-FCC_hdi.csv')
-    plot_CC_distbs(fcc_df, 'fcc', r, results_dir, dataset_name)
+    fcc_df = ADVI_CCs_hdi(trace, trace_prior, 'fcc', r, model, ll, results_dir + 
+                          f'FCC-hdi/{dataset_name}-FCC_hdi.csv', cc_indexer=target_rxn_i)
+    plot_CC_distbs(fcc_df, 'fcc', r, results_dir, dataset_name, cc_indexer=target_rxn_i)
     
 
-def calculate_gt_FCCs(r):
+def calculate_gt_FCCs(r, target_rxn_i):
     """
     objective: directly calculates the FCCs of model
     Parameters
@@ -208,10 +215,10 @@ def calculate_gt_FCCs(r):
     Returns FCCs for sink reaction
     """
     r.steadyState()
-    return r.getScaledFluxControlCoefficientMatrix()[-1]
+    return r.getScaledFluxControlCoefficientMatrix()[target_rxn_i]
 
 
-def calculate_gt_MCCs(r, target_rxn_i):
+def calculate_gt_MCCs(r, desired_product):
     """
     objective: directly calculates the CCCs of model
     Parameters
@@ -219,7 +226,7 @@ def calculate_gt_MCCs(r, target_rxn_i):
     Returns CCCs for sink reaction
     """
     r.steadyState()
-    return r.getScaledConcentrationControlCoefficientMatrix()[:, target_rxn_i]
+    return r.getScaledConcentrationControlCoefficientMatrix()[desired_product]
 
 
 def plot_ADVI_converg(approx, itr, results_dir, dataset_name):
@@ -315,7 +322,7 @@ def plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name
     plt.savefig(results_dir + 'elast-plot/' + f'{dataset_name}-plotted_elasticities.svg', transparent=True)
 
 
-def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir, target_rxn_i=None):
+def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir, cc_indexer=None):
     """
     Ex_hdi is the hdi of the posterior Ex trace as a numpy array
     """
@@ -330,25 +337,26 @@ def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir, target_
     if cc_type=='mcc':
         cc_mb = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in a])   
         cc_prior = np.array([ll.metabolite_control_coefficient(Ex=ex) for ex in b]) 
-        gt_ccs = calculate_gt_MCCs(r, target_rxn_i) 
+        gt_ccs = calculate_gt_MCCs(r, cc_indexer) 
     elif cc_type=='fcc':
         cc_mb = np.array([ll.flux_control_coefficient(Ex=ex) for ex in a])   
         cc_prior = np.array([ll.flux_control_coefficient(Ex=ex) for ex in b]) 
-        gt_ccs = calculate_gt_FCCs(r)
+        gt_ccs = calculate_gt_FCCs(r, cc_indexer)
     else: 
         raise Exception("cc_type must either be 'mcc' or 'fcc'")
-
-    df2 = pd.DataFrame(cc_mb[:, 0], columns=[r.id for r in model.reactions]
+    
+    enzymesList = [i for i in r.getGlobalParameterIds() if 'E' in i]
+    df2 = pd.DataFrame(cc_mb[:, 0], columns=enzymesList
                     ).stack().reset_index(level=1)
-    df3 = pd.DataFrame(cc_prior[:, 0], columns=[r.id for r in model.reactions]
+    df3 = pd.DataFrame(cc_prior[:, 0], columns=enzymesList
                     ).stack().reset_index(level=1)
-    df2['type'] = 'ADVI'
-    df3['type'] = 'Prior'
+    df2['Type'] = 'ADVI'
+    df3['Type'] = 'Prior'
 
     cc_df = pd.concat([df2, df3])
-    cc_df.columns = ['Reaction', cc_type, 'Type']
+    cc_df.columns = ['Enzymes', cc_type, 'Type']
 
-    cc_hdi = pd.pivot_table(cc_df.reset_index(), values=cc_type, index =['Type', 'index'], columns='Reaction')
+    cc_hdi = pd.pivot_table(cc_df.reset_index(), values=cc_type, index =['Type', 'index'], columns='Enzymes')
 
     column_order = r.getReactionIds()
     cc_hdi = cc_hdi.reindex(column_order, axis=1)
@@ -368,7 +376,7 @@ def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir, target_
     return cc_df
     
     
-def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name, target_rxn_i=None):
+def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name, cc_indexer=None):
     """
     objective: 
     Parameters---
@@ -382,9 +390,11 @@ def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name, target_rxn_i=No
     Return nothing. 
     """
     if cc_type=='mcc':
-        gt_ccs = calculate_gt_MCCs(r, target_rxn_i) 
+        gt_ccs = calculate_gt_MCCs(r, cc_indexer) 
+        target_metabolite = cc_indexer
     elif cc_type=='fcc':
-        gt_ccs = calculate_gt_FCCs(r) 
+        gt_ccs = calculate_gt_FCCs(r, cc_indexer) 
+        target_metabolite = r.getReactionIds()[-1]
     else: 
         raise Exception("cc_type must either be 'mcc' or 'fcc'")
     
@@ -396,7 +406,7 @@ def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name, target_rxn_i=No
     ax2 = fig.add_subplot(111, frameon=False, sharex=ax, sharey=ax)
 
     sns.violinplot(
-        x='Reaction', y=cc_type, hue='Type', data=cc_df[cc_df.Type == 'Prior'],
+        x='Enzymes', y=cc_type, hue='Type', data=cc_df[cc_df.Type == 'Prior'],
         scale='width', width=0.5, legend=False, zorder=0,
         color='1.', ax=ax, saturation=1., alpha=0.01)
 
@@ -404,7 +414,7 @@ def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name, target_rxn_i=No
     plt.setp(ax.collections, alpha=.5, label="")
 
     sns.violinplot(
-        x='Reaction', y=cc_type, hue='Type', data=cc_df,
+        x='Enzymes', y=cc_type, hue='Type', data=cc_df,
         scale='width', width=0.8, hue_order=['ADVI'],
         legend=False, palette=my_pal, zorder=3, ax=ax2)
 
@@ -422,7 +432,7 @@ def plot_CC_distbs(cc_df, cc_type, r, results_dir, dataset_name, target_rxn_i=No
     ax.axhline(0, ls='--', color='.7', zorder=0)
     sns.despine(trim=True)
 
-    plt.suptitle(dataset_name + f' Predicted {cc_type.upper()}s', y=1)
+    plt.suptitle(dataset_name + f' Predicted {cc_type.upper()}s: {target_metabolite}', y=1)
 
     fig.savefig(results_dir + f'{cc_type.upper()}-graph/{dataset_name}-plotted_{cc_type}s.svg', transparent=True)
 
