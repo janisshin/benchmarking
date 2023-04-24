@@ -40,38 +40,28 @@ import arviz as az
 import emll
 from emll.util import initialize_elasticity
 
-def locateData(passlist, folder_name='./'):
+
+#####################################################################
+
+def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     """
-    passlist is a literal list of filenames of models that passed the filter criteria
-
-    what is b?? name of a filename?
-        if "handle" is in the name of the generated data file, 
-        make sure to collect that data
-
-    you're trying to make a list of lists
-    The inner lists will have different dataset types for one type of model
-    the larger list will have a collections of datasets from all passed models.
+    path = name of Antimony model file (the cobra compatible version of model)
+    dataPath = filepath of dataset (including dataset name)
+    itr = number of iterations in ADVI
+    folder_name = where to pull model data and store results
     """
-    datasets = []
-
-    for passN in passlist:
-        modelset = []
-        for dataset_name in os.listdir(folder_name + 'generated_data/'):
-            if f'data_{passN}_' in dataset_name:
-                modelset.append(dataset_name)
-        datasets.append(modelset)
-    return datasets
-
-
-def run_analysis(path, dataPath, itr=30000, folder_name="./"):
-    
     r = te.loada(folder_name + 'antimony/' + path)
     with open("temp.txt", "w") as f:
         f.write(r.getSBML())
-    
+
     model = cobra.io.read_sbml_model("temp.txt")
+    os.remove("temp.txt") 
+    
     # return r, model
-    data = pd.read_csv(folder_name + 'generated_data/' + dataPath).astype(float)
+    if noise: 
+        data = pd.read_csv(folder_name + 'noisy_generated_data/' + dataPath).astype(float)
+    else: 
+        data = pd.read_csv(folder_name + 'generated_data/' + dataPath).astype(float)
 
     N = r.getFullStoichiometryMatrix()
     nm, nr = N.shape
@@ -89,12 +79,13 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     v = data[v_cols]
 
     # the reference index is the strain that produces the most of a desired product
-    # here, we arbitrarily choose the random 
-    ref_strain = y_cols[-1]
-    ref_ind = data.idxmax()[ref_strain] ## corresponds to how the data was generated
-    exSp = [i.id for i in model.reactions if 'EX' in i.id]
-    target_rxn_i = model.reactions.index([i for i in exSp if y_cols[-1][1:] == i[4:]][0])
-
+    # here, we arbitrarily choose a random species as our desired product
+    desired_product = y_cols[-1] # the desired product
+    ref_ind = data.idxmax()[desired_product] # the index at which the level of desired product is highest
+    exSp = [i.id for i in model.reactions if 'EX' in i.id] # list of boundary reactions
+    target_rxn = [i for i in exSp if desired_product[1:] == i[4:]][0]
+    target_rxn_i = model.reactions.index(target_rxn) # the index of the reaction which produces the desired product
+        
     e_star = e.iloc[ref_ind].values
     x_star = x.iloc[ref_ind].values
     y_star = y.iloc[ref_ind].values
@@ -113,6 +104,23 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./"):
     xn = xn.drop(ref_ind)
     yn = yn.drop(ref_ind)
     vn = vn.drop(ref_ind)    
+
+
+    if noise:
+        model.objective = target_rxn
+        for i, rxn in enumerate(model.reactions):
+            if 'EX' in rxn.id:
+                model.reactions.get_by_id(rxn.id).upper_bound = v_star[i]
+                model.reactions.get_by_id(rxn.id).lower_bound = v_star[i]
+            elif v_star[i] > 0:
+                model.reactions.get_by_id(rxn.id).upper_bound = v_star[i] * 2
+                model.reactions.get_by_id(rxn.id).lower_bound = 0        
+            else:
+                model.reactions.get_by_id(rxn.id).upper_bound = 0
+                model.reactions.get_by_id(rxn.id).lower_bound = v_star[i] * 2        
+        sol = model.optimize()
+        v_star = sol.fluxes.values
+
 
     N[:, v_star < 0] = -1 * N[:, v_star < 0]
     v_star = np.abs(v_star)
