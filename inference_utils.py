@@ -125,6 +125,17 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
                 model.reactions.get_by_id(rxn.id).lower_bound = v_star[i] * 2        
         sol = model.optimize()
         v_star = sol.fluxes.values
+        
+        # if solver status is infeasible
+        if not np.allclose(N @ v_star, 0):
+            for r in model.reactions:
+                if 'EX' not in r.id:
+                    r.upper_bound = 1000
+                    r.lower_bound = -1000
+            sol = model.optimize()
+            new_v_star = sol.fluxes.values
+        # solver status may still be infeasible, but then the model will just 
+        # fail out of the pipeline    
 
     N[:, v_star < 0] = -1 * N[:, v_star < 0]
     v_star = np.abs(v_star)
@@ -358,12 +369,12 @@ def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir, cc_inde
 
     cc_hdi = pd.pivot_table(cc_df.reset_index(), values=cc_type, index =['Type', 'index'], columns='Enzymes')
 
-    column_order = r.getReactionIds()
+    column_order = enzymesList
     cc_hdi = cc_hdi.reindex(column_order, axis=1)
     cc_hdi.to_csv(results_dir)
 
     medians = []
-    for e in r.getReactionIds(): # what is this line doing
+    for e in enzymesList:
         vals = df2[df2['level_1'] == e]
         vals.columns = ['_', 'val', '__']
         medians.append(vals['val'].median())
