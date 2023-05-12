@@ -1,6 +1,6 @@
 FOLDER_NAME = '10sp_w-Allo/'
 NOISE=False
-DATA_OMISSION_CODE = 'B-x'
+DATA_OMISSION_CODE = 'C-x'
 ADVI_ITERATIONS = 60000 # 30000
 FAIL_LOG_FILE = f'failed10-{DATA_OMISSION_CODE}.log'
 # what position is the passNumber? e.g. 1 for "data_24_pt10.csv or 2
@@ -91,4 +91,8 @@ for dataPath in os.listdir(FOLDER_NAME + DATA_FOLDER_NAME):
     except: 
         with open(FAIL_LOG_FILE, "a") as f:
             f.write(dataPath + '\n')
-    
+"""
+path = 'mass_action_3364.ant'
+dataPath='data_3364_pt10.csv'
+bi.run_analysis(path, dataPath, itr=ADVI_ITERATIONS, folder_name=FOLDER_NAME, noise=NOISE)        
+"""
