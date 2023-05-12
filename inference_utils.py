@@ -79,7 +79,7 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     e = data[e_cols]
     x = data[x_cols]
     y = data[y_cols]
-    v = data[v_cols]
+    # v = data[v_cols]
 
     # the reference index is the strain that produces the most of a 
     # desired product here, we arbitrarily choose a random species as 
@@ -97,21 +97,21 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     e_star = e.iloc[ref_ind].values
     x_star = x.iloc[ref_ind].values
     y_star = y.iloc[ref_ind].values
-    v_star = v.iloc[ref_ind].values
+    # v_star = v.iloc[ref_ind].values
 
-    v_star[v_star == 0] = 1e-9
+    # v_star[v_star == 0] = 1e-9
     y_star[y_star == 0] = 1e-6
 
     # Normalize to reference values (and drop trivial measurement)
     en = e.divide(e_star)
     xn = x.divide(x_star)
     yn = y.divide(y_star)
-    vn = v.divide(v_star)
+    # vn = v.divide(v_star)
 
     en = en.drop(ref_ind)
     xn = xn.drop(ref_ind)
     yn = yn.drop(ref_ind)
-    vn = vn.drop(ref_ind)    
+    # vn = vn.drop(ref_ind)    
 
     if noise:
         model.objective = target_rxn
@@ -138,6 +138,10 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
             new_v_star = sol.fluxes.values
         # solver status may still be infeasible, but then the model will just 
         # fail out of the pipeline    
+
+    model.objective = target_rxn
+    sol = model.optimize()
+    v_star = sol.fluxes.values
 
     N[:, v_star < 0] = -1 * N[:, v_star < 0]
     v_star = np.abs(v_star)
@@ -173,7 +177,7 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
 
         # Error distributions for observed steady-state concentrations and fluxes
         
-        v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_x, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
+        v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_x, sigma=0.1) # both bn and v_hat_ss are (28,6)
         chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=0.1,  observed=xn) # chi_ss and xn is (28,4)
         y_obs = pm.Normal('y_obs', mu=y_ss,  sigma=0.1, observed=yn)
         e_obs = pm.Normal('e_obs', mu=1,  sigma=0.1, observed=en)
