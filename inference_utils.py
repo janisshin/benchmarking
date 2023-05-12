@@ -139,10 +139,6 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
         # solver status may still be infeasible, but then the model will just 
         # fail out of the pipeline    
 
-    #model.objective = target_rxn
-    #sol = model.optimize()
-    #v_star = sol.fluxes.values
-
     N[:, v_star < 0] = -1 * N[:, v_star < 0]
     v_star = np.abs(v_star)
 
@@ -164,25 +160,26 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
         Ey_t = pm.Deterministic('Ey', initialize_elasticity(-Ey.T, 'ey', b=0.05, sd=1, alpha=5))
 
     with pymc_model:
-        
+    
+        xn_t = pm.Normal('xn_t', mu=1, sigma=10, shape=xn.shape,
+                    initval=0.1 * np.random.randn(xn.shape[0], xn.shape[1]))
+
         # Error priors. 
         #v_err = pm.HalfNormal('v_error', sigma=0.05, initval=.1)
         #x_err = pm.HalfNormal('x_error', sigma=0.05, initval=.1)
         #y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
         #e_err = pm.HalfNormal('e_error', sigma=10, initval=.01)
 
-        en = pm.Normal('e_unmeasured', mu=1, sigma=10, shape=en.shape)
-
         # Calculate steady-state concentrations and fluxes from elasticities
-        chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en, yn)
-        y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en, xn)
+        #chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en, yn)
+        y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en.to_numpy(), xn_t)
 
         # Error distributions for observed steady-state concentrations and fluxes
         
-        v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_x, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
-        chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=0.1,  observed=xn) # chi_ss and xn is (28,4)
+        v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_y, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
+        # chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=0.1,  observed=xn) # chi_ss and xn is (28,4)
         y_obs = pm.Normal('y_obs', mu=y_ss,  sigma=0.1, observed=yn)
-        # e_obs = pm.Normal('e_obs', mu=1,  sigma=0.1, observed=en)
+        e_obs = pm.Normal('e_obs', mu=1,  sigma=0.1, observed=en)
 
     with pymc_model:
         trace_prior = pm.sample_prior_predictive() 
