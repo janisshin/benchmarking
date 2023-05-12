@@ -36,6 +36,8 @@ sns.set(context='talk', style='ticks',
         color_codes=True, rc={'legend.frameon': False})
 import arviz as az
 
+import cloudpickle
+
 # linlog Bayesian Metabolic Control Analysis
 import emll
 from emll.util import initialize_elasticity
@@ -55,7 +57,7 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
 
     model = cobra.io.read_sbml_model("temp.txt")
     os.remove("temp.txt") 
-
+    
     # return r, model
     if noise: 
         data = pd.read_csv(folder_name + 'noisy_generated_data/' + 
@@ -160,10 +162,10 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     with pymc_model:
         
         # Error priors. 
-        v_err = pm.HalfNormal('v_error', sigma=0.05, initval=.1)
-        x_err = pm.HalfNormal('x_error', sigma=0.05, initval=.1)
-        y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
-        e_err = pm.HalfNormal('e_error', sigma=10, initval=.01)
+        #v_err = pm.HalfNormal('v_error', sigma=0.05, initval=.1)
+        #x_err = pm.HalfNormal('x_error', sigma=0.05, initval=.1)
+        #y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
+        #e_err = pm.HalfNormal('e_error', sigma=10, initval=.01)
 
         # Calculate steady-state concentrations and fluxes from elasticities
         chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en.to_numpy(), yn)
@@ -171,11 +173,12 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
 
         # Error distributions for observed steady-state concentrations and fluxes
         
-        v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_y, sigma=v_err, observed=vn) # both bn and v_hat_ss are (28,6)
-        chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=x_err,  observed=xn) # chi_ss and xn is (28,4)
-        y_obs = pm.Normal('y_obs', mu=y_ss,  sigma=y_err, observed=yn)
-        e_obs = pm.Normal('e_obs', mu=0,  sigma=e_err, observed=en)
+        v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_x, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
+        chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=0.1,  observed=xn) # chi_ss and xn is (28,4)
+        y_obs = pm.Normal('y_obs', mu=y_ss,  sigma=0.1, observed=yn)
+        e_obs = pm.Normal('e_obs', mu=1,  sigma=0.1, observed=en)
 
+    with pymc_model:
         trace_prior = pm.sample_prior_predictive() 
     
     # sampling
@@ -183,6 +186,8 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
         approx = pm.ADVI()
         hist = approx.fit(n=itr, obj_optimizer=pm.adagrad_window(learning_rate=5E-3), obj_n_mc=1)
     
+    print('boop')
+
     with pymc_model:
         trace = hist.sample(1000)    
         ppc_vi = pm.sample_posterior_predictive(trace, random_seed=1)
@@ -206,7 +211,7 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     plot_ADVI_converg(approx, itr, results_dir + 'convergence/', dataset_name)
     
     elasticities_to_csv(trace, e_labels, results_dir + 'elast-hdi/' + dataset_name)
-    # plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
+    plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
 
     mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, model, ll, results_dir + 
                           f'MCC-hdi/{dataset_name}-MCC_hdi.csv', 
@@ -216,7 +221,16 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     fcc_df = ADVI_CCs_hdi(trace, trace_prior, 'fcc', r, model, ll, results_dir + 
                           f'FCC-hdi/{dataset_name}-FCC_hdi.csv', cc_indexer=target_rxn_i)
     plot_CC_distbs(fcc_df, 'fcc', r, results_dir, dataset_name, cc_indexer=target_rxn_i)
-    
+    """
+    cloudpickle.dump({'advi': approx,
+    'approx': approx,
+    'trace': trace,
+    'trace_prior': trace_prior,
+    'e_labels': e_labels,
+    'r_labels': r_labels,
+    'm_labels': m_labels,
+    'll': ll}, file=open(f'folder_name + {dataset_name}_advi.pgz', "wb"))
+   """ 
 
 def calculate_gt_FCCs(r, target_rxn_i):
     """
@@ -225,6 +239,7 @@ def calculate_gt_FCCs(r, target_rxn_i):
     r: roadrunner object of model
     Returns FCCs for sink reaction
     """
+    r.simulate(0,1000000)
     r.steadyState()
     return r.getScaledFluxControlCoefficientMatrix()[target_rxn_i]
 
@@ -236,6 +251,7 @@ def calculate_gt_MCCs(r, desired_product):
     r: roadrunner object of model
     Returns CCCs for sink reaction
     """
+    r.simulate(0,1000000)
     r.steadyState()
     return r.getScaledConcentrationControlCoefficientMatrix()[desired_product]
 
@@ -333,7 +349,7 @@ def plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name
     plt.savefig(results_dir + 'elast-plot/' + f'{dataset_name}-plotted_elasticities.svg', transparent=True)
 
 
-def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, model, ll, results_dir, cc_indexer=None):
+def ADVI_CCs_hdi(trace, trace_prior, cc_type, r, ll, results_dir, cc_indexer=None):
     """
     Ex_hdi is the hdi of the posterior Ex trace as a numpy array
     """
