@@ -1,7 +1,7 @@
 FOLDER_NAME = '10sp_w-Allo/'
 NOISE=False
-DATA_OMISSION_CODE = 'E'
-ADVI_ITERATIONS = 60000 # 30000
+DATA_OMISSION_CODE = 'F'
+ADVI_ITERATIONS = 60000 # 60000
 FAIL_LOG_FILE = f'failed10-{DATA_OMISSION_CODE}.log'
 # what position is the passNumber? e.g. 1 for "data_24_pt10.csv or 2
 # for "mass_action_152.xml" 
@@ -83,16 +83,16 @@ for dataPath in os.listdir(FOLDER_NAME + DATA_FOLDER_NAME):
     modelNo = re.split(r'[_|.]', dataPath)[passN]
     path = f'mass_action_{modelNo}.ant'
     print(path)
-    with open(FAIL_LOG_FILE, "a") as f:
+    with open(results_dir + FAIL_LOG_FILE, "a") as f:
             f.write(str(datetime.now())+'\n')
 
     try:
-        bi.run_analysis(path, dataPath, itr=ADVI_ITERATIONS, folder_name=FOLDER_NAME, noise=NOISE)        
+        bi.run_analysis(path, dataPath, itr=ADVI_ITERATIONS, folder_name=FOLDER_NAME, results_dir=results_dir, noise=NOISE)        
     except: 
-        with open(FAIL_LOG_FILE, "a") as f:
+        with open(results_dir + FAIL_LOG_FILE, "a") as f:
             f.write(dataPath + '\n')
 """
 path = 'mass_action_3364.ant'
 dataPath='data_3364_pt10.csv'
-bi.run_analysis(path, dataPath, itr=ADVI_ITERATIONS, folder_name=FOLDER_NAME, noise=NOISE)        
+bi.run_analysis(path, dataPath, itr=ADVI_ITERATIONS, folder_name=FOLDER_NAME, results_dir=results_dir, noise=NOISE)        
 """
