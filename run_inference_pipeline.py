@@ -1,6 +1,6 @@
 FOLDER_NAME = '10sp_w-Allo/'
 NOISE=False
-DATA_OMISSION_CODE = 'A-x1'
+DATA_OMISSION_CODE = 'C-x3'
 ADVI_ITERATIONS = 100000 # 60000
 FAIL_LOG_FILE = f'failed10-{DATA_OMISSION_CODE}.log'
 # what position is the passNumber? e.g. 1 for "data_24_pt10.csv or 2
