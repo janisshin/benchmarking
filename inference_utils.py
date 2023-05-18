@@ -44,7 +44,7 @@ from emll.util import initialize_elasticity
 
 ######################################################################
 
-def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
+def run_analysis(path, dataPath, itr=30000, folder_name="./", results_dir='./results/', noise=False):
     """
     path = name of Antimony model file (the cobra compatible version of model)
     dataPath = filepath of dataset (including dataset name)
@@ -160,26 +160,22 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
         Ey_t = pm.Deterministic('Ey', initialize_elasticity(-Ey.T, 'ey', b=0.05, sd=1, alpha=5))
 
     with pymc_model:
-    
-        yn_t = pm.Normal('xn_t', mu=1, sigma=10, shape=yn.shape,
-                    initval=0.1 * np.random.randn(yn.shape[0], yn.shape[1]))
-
         # Error priors. 
         #v_err = pm.HalfNormal('v_error', sigma=0.05, initval=.1)
         #x_err = pm.HalfNormal('x_error', sigma=0.05, initval=.1)
         #y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
         #e_err = pm.HalfNormal('e_error', sigma=10, initval=.01)
-
+        
         # Calculate steady-state concentrations and fluxes from elasticities
-        chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en.to_numpy(), yn_t)
-        #y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en.to_numpy(), xn_t)
+        chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en.to_numpy(), yn)
+        y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en.to_numpy(), xn)
 
         # Error distributions for observed steady-state concentrations and fluxes
         
         v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_x, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
-        chi_obs = pm.Normal('chi_obs', mu=chi_ss,  sigma=0.1,  observed=xn) # chi_ss and xn is (28,4)
-        #y_obs = pm.Normal('y_obs', mu=y_ss,  sigma=0.1, observed=yn)
-        e_obs = pm.Normal('e_obs', mu=1,  sigma=0.1, observed=en)
+        chi_obs = pm.Normal('chi_obs', mu=chi_ss, sigma=0.1, observed=xn) # chi_ss and xn is (28,4)
+        y_obs = pm.Normal('y_obs', mu=y_ss, sigma=0.1, observed=yn)
+        e_obs = pm.Normal('e_obs', mu=1, sigma=0.1, observed=en)
 
     with pymc_model:
         trace_prior = pm.sample_prior_predictive() 
@@ -206,20 +202,18 @@ def run_analysis(path, dataPath, itr=30000, folder_name="./", noise=False):
     e_labels = np.hstack((ex_labels, ey_labels))
     
     # generating and storing results
-    results_dir = './' + folder_name + 'results/'
     dataset_name = dataPath.split(".")[0]
 
     plot_ADVI_converg(approx, itr, results_dir + 'convergence/', dataset_name)
     
     elasticities_to_csv(trace, e_labels, results_dir + 'elast-hdi/' + dataset_name)
     plot_elasticities(trace, trace_prior, N, e_labels, results_dir, dataset_name)
-
-    mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, model, ll, results_dir + 
+    mcc_df = ADVI_CCs_hdi(trace, trace_prior, 'mcc', r, ll, results_dir + 
                           f'MCC-hdi/{dataset_name}-MCC_hdi.csv', 
                           cc_indexer=desired_product)
     plot_CC_distbs(mcc_df, 'mcc', r, results_dir, dataset_name, cc_indexer=desired_product)
     
-    fcc_df = ADVI_CCs_hdi(trace, trace_prior, 'fcc', r, model, ll, results_dir + 
+    fcc_df = ADVI_CCs_hdi(trace, trace_prior, 'fcc', r, ll, results_dir + 
                           f'FCC-hdi/{dataset_name}-FCC_hdi.csv', cc_indexer=target_rxn_i)
     plot_CC_distbs(fcc_df, 'fcc', r, results_dir, dataset_name, cc_indexer=target_rxn_i)
     """
