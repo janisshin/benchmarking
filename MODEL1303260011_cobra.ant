@@ -104,16 +104,7 @@ model *MODEL1303260011()
   species F16bP in cell, F6P in cell, G1P in cell, G3P in cell, G6P in cell;
   species GAP in cell, GLC in cell, NAD in cell, P2G in cell, P3G in cell;
   species PEP in cell, PYR in cell, T6P in cell, UDP in cell, UTP in cell;
-  species $AMP in cell, $NADH in cell, $UDG in cell, $ACE in cell, $EtOH in cell;
-  species $F26bP in cell, $GLCx in extracellular, $GLY in cell, $SUC in cell;
-  species $TRH in cell, $ADH1 in cell, $ADH5 in cell, $CDC19 in cell, $ENO1 in cell;
-  species $ENO2 in cell, $FBA1 in cell, $GLK1 in cell, $GPD1 in cell, $GPD2 in cell;
-  species $GPM1 in cell, $HOR2 in cell, $HXK1 in cell, $HXK2 in cell, $PDC1 in cell;
-  species $PDC5 in cell, $PDC6 in cell, $PFK1 in cell, $PFK2 in cell, $PGI1 in cell;
-  species $PGK1 in cell, $PGM1 in cell, $PGM2 in cell, $PYK2 in cell, $RHR2 in cell;
-  species $TDH1 in cell, $TDH2 in cell, $TDH3 in cell, $TPI1 in cell, $TPS1 in cell;
-  species $TPS2 in cell, $UGP1 in cell;
-
+  
   // Assignment Rules:
   AMP := max_(sum_AXP - ATP - ADP, 0);
   NADH := max_(sum_NAD - NAD, 0);
@@ -123,36 +114,36 @@ model *MODEL1303260011()
   sum_PXG := P2G + P3G;
 
   // Reactions:
-  EX_ADH: AcAld -> NAD; ENZYME_ADH*cell*rmm_bb(AcAld, NADH, EtOH, NAD, ADH_Vmax, ADH_Kacald, ADH_Kiacald, ADH_Knadh, ADH_Kinadh, ADH_Ketoh, ADH_Kietoh, ADH_Knad, ADH_Kinad, ADH_Keq);
-  EX_AK: 2 ADP -> ATP; ENZYME_AK*cell*rma(ADP*ADP, AMP*ATP, AK_k, AK_Keq);
-  ATPase: ATP => ADP; ENZYME_ATPase*cell*imm1_np(ATP, ATPase_Vmax, ATPase_Katp);
-  ENO: P2G -> PEP; ENZYME_ENO*cell*rmm1(P2G, PEP, ENO_Vmax, ENO_Kp2g, ENO_Kpep, ENO_Keq);
-  FBA: F16bP -> DHAP + GAP; ENZYME_FBA*cell*rmm_ub(F16bP, DHAP, GAP, FBA1*FBA_kcat, FBA_Kf16bp, FBA_Kdhap, FBA_Kgap, FBA_Kigap, FBA_Keq);
-  EX_GPD: DHAP -> G3P + NAD; ENZYME_GPD*cell*rmm2_3i(DHAP, NADH, G3P, NAD, F16bP, ATP, ADP, GPD_Vmax, GPD_Kdhap, GPD_Knadh, GPD_Kg3p, GPD_Knad, GPD_Kfbp, GPD_Katp, GPD_Kadp, GPD_Keq);
-  GPM: P3G -> P2G; ENZYME_GPM*cell*rmm1(P3G, P2G, GPM_Vmax, GPM_Kp3g, GPM_Kp2g, GPM_Keq);
-  EX_GPP: G3P => ; ENZYME_GPP*cell*imm1_np(G3P, GPP_Vmax, GPP_Kg3p);
-  HXK_GLK1: GLC + ATP -> G6P + ADP; ENZYME_HXK_GLK1*cell*rmm2(GLC, ATP, G6P, ADP, GLK1*HXK_GLK1_kcat, HXK_GLK1_Kglc, HXK_GLK1_Katp, HXK_GLK1_Kg6p, HXK_GLK1_Kadp, Keq_HXK);
-  HXK_HXK1: GLC + ATP -> G6P + ADP; ENZYME_HXK_HXK1*cell*hxk_t6p(GLC, ATP, G6P, ADP, T6P, HXK1*HXK_HXK1_kcat, HXK_HXK1_Kglc, HXK_HXK1_Katp, HXK_HXK1_Kg6p, HXK_HXK1_Kadp, HXK_HXK1_Kit6p, Keq_HXK);
-  HXK_HXK2: GLC + ATP -> G6P + ADP; ENZYME_HXK_HXK2*cell*hxk_t6p(GLC, ATP, G6P, ADP, T6P, HXK2*HXK_HXK2_kcat, HXK_HXK2_Kglc, HXK_HXK2_Katp, HXK_HXK2_Kg6p, HXK_HXK2_Kadp, HXK_HXK2_Kit6p, Keq_HXK);
-  PDC_PDC1: PYR => AcAld; ENZYME_PDC_PDC1*cell*imm1_np(PYR, PDC1*PDC_PDC1_kcat, PDC_PDC1_Kpyr);
-  PDC_PDC5: PYR => AcAld; ENZYME_PDC_PDC5*cell*imm1_np(PYR, PDC5*PDC_PDC5_kcat, PDC_PDC5_Kpyr);
-  PDC_PDC6: PYR => AcAld; ENZYME_PDC_PDC6*cell*imm1_np(PYR, PDC6*PDC_PDC6_kcat, PDC_PDC6_Kpyr);
-  PFK: ATP + F6P => ADP + F16bP; ENZYME_PFK*cell*pfk_keq(F6P, ATP, F16bP, ADP, AMP, F26bP, min_(PFK1, PFK2)*PFK_kcat, PFK_gR, PFK_Kf6p, PFK_Katp, PFK_L0, PFK_Ciatp, PFK_Kiatp, PFK_Camp, PFK_Kamp, PFK_Cf26, PFK_Kf26, PFK_Cf16, PFK_Kf16, PFK_Catp, PFK_Kadp, PFK_Keq);
-  PGI: G6P -> F6P; ENZYME_PGI*cell*rmm1(G6P, F6P, PGI1*PGI_kcat, PGI_Kg6p, PGI_Kf6p, PGI_Keq);
-  PGK: ADP + BPG -> ATP + P3G; ENZYME_PGK*cell*rmm2(BPG, ADP, P3G, ATP, PGK_Vmax, PGK_Kbpg, PGK_Kadp, PGK_Kp3g, PGK_Katp, PGK_Keq);
-  PGM: G6P -> G1P; ENZYME_PGM*rescale_TRH*cell*rmm1(G6P, G1P, PGM_Vmax, PGM_Kg6p, PGM_Kg1p, PGM_Keq);
-  PYK: ADP + PEP -> ATP + PYR; ENZYME_PYK*cell*rmm2(PEP, ADP, PYR, ATP, PYK_Vmax, PYK_Kpep, PYK_Kadp, PYK_Kpyr, PYK_Katp, PYK_Keq);
-  EX_TDH_TDH1: GAP + NAD -> BPG; ENZYME_TDH_TDH1*cell*rmm2(GAP, NAD, BPG, NADH, TDH1*TDH_TDH1_kcat, TDH_TDH1_Kgap, TDH_TDH1_Knad, TDH_TDH1_Kbpg, TDH_TDH1_Knadh, Keq_TDH);
-  EX_TDH_TDH2: GAP + NAD -> BPG; ENZYME_TDH_TDH2*cell*rmm2(GAP, NAD, BPG, NADH, TDH2*TDH_TDH2_kcat, TDH_TDH2_Kgap, TDH_TDH2_Knad, TDH_TDH2_Kbpg, TDH_TDH2_Knadh, Keq_TDH);
-  EX_TDH_TDH3: GAP + NAD -> BPG; ENZYME_TDH_TDH3*cell*rmm2(GAP, NAD, BPG, NADH, TDH3*TDH_TDH3_kcat, TDH_TDH3_Kgap, TDH_TDH3_Knad, TDH_TDH3_Kbpg, TDH_TDH3_Knadh, Keq_TDH);
-  TPI: DHAP -> GAP; ENZYME_TPI*cell*rma(DHAP, GAP, TPI_k, TPI_Keq);
-  EX_TPP: T6P => ; ENZYME_TPP*rescale_TRH*cell*imm1_np(T6P, TPP_Vmax, TPP_Kt6p);
-  EX_TPS: G6P => T6P + UDP; ENZYME_TPS*rescale_TRH*cell*imm2_np(G6P, UDG, TPS_Vmax, TPS_Kg6p, TPS_Kudg);
-  EX_UGP: G1P + UTP => ; ENZYME_UGP*rescale_TRH*cell*ugp_fun(UTP, G1P, UDG, UGP_Vmax, UGP_Kutp, UGP_Kiutp, UGP_Kg1p, UGP_Kiudg);
-  EX_acetate_branch: AcAld + NAD => ; ENZYME_acetate_branch*cell*ima(AcAld*NAD, acetate_branch_k);
-  EX_succinate_branch: PYR + 3 NAD => ; ENZYME_succinate_branch*cell*ima(PYR*NAD, succinate_branch_k);
-  udp_to_utp: UDP + ATP => UTP + ADP; ENZYME_udp_to_utp*rescale_TRH*cell*ima(UDP*ATP, udp_to_utp_k);
-  EX_HXT: -> GLC; ENZYME_HXT*cell*fd(GLCx, GLC, HXT_Vmax, HXT_Kglc, HXT_Ki);
+  EX_ADH: AcAld -> NAD; ;
+  EX_AK: 2 ADP -> ATP; ;
+  ATPase: ATP => ADP; ;
+  ENO: P2G -> PEP; ;
+  FBA: F16bP -> DHAP + GAP; ;
+  EX_GPD: DHAP -> G3P + NAD; ;
+  GPM: P3G -> P2G; ;
+  EX_GPP: G3P => ; ;
+  HXK_GLK1: GLC + ATP -> G6P + ADP; ;
+  HXK_HXK1: GLC + ATP -> G6P + ADP; ;
+  HXK_HXK2: GLC + ATP -> G6P + ADP; ;
+  PDC_PDC1: PYR => AcAld; ;
+  PDC_PDC5: PYR => AcAld; ;
+  PDC_PDC6: PYR => AcAld; ;
+  PFK: ATP + F6P => ADP + F16bP; ;
+  PGI: G6P -> F6P; ;
+  PGK: ADP + BPG -> ATP + P3G; ;
+  PGM: G6P -> G1P; ;
+  PYK: ADP + PEP -> ATP + PYR; ;
+  EX_TDH_TDH1: GAP + NAD -> BPG; ;
+  EX_TDH_TDH2: GAP + NAD -> BPG; ;
+  EX_TDH_TDH3: GAP + NAD -> BPG; ;
+  TPI: DHAP -> GAP; ;
+  EX_TPP: T6P => ; ;
+  EX_TPS: G6P => T6P + UDP; ;
+  EX_UGP: G1P + UTP => ; ;
+  EX_acetate_branch: AcAld + NAD => ; ;
+  EX_succinate_branch: PYR + 3 NAD => ; ;
+  udp_to_utp: UDP + ATP => UTP + ADP; ;
+  EX_HXT: -> GLC; ;
 
   // Species initializations:
   ADP = 1.29;
