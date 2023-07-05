@@ -7,7 +7,7 @@ dataPath='MODEL1303260011_pt10.csv'
 
 FOLDER_NAME = 'glycolysis/'
 NOISE=False
-DATA_OMISSION_CODE = 'B'
+DATA_OMISSION_CODE = 'A-x'
 ADVI_ITERATIONS = 100000 # 60000
 FAIL_LOG_FILE = f'failed-{DATA_OMISSION_CODE}.log'
 DATA_FOLDER_NAME = 'generated_data/'
@@ -92,17 +92,13 @@ exRxns = [i.id for i in model.reactions if 'EX' in i.id]
 target_rxn = [i for i in exRxns if desired_product == i[3:]][0]
 desired_product = target_rxn[3:] # the internal form of the desired product
 
-model.objective = target_rxn
-    sol = model.optimize()
-    v_star = sol.fluxes.values
-
 e_star = e.iloc[ref_ind].values
 x_star = x.iloc[ref_ind].values
 y_star = y.iloc[ref_ind].values
-# v_star = v.iloc[ref_ind].values
+v_star = v.iloc[ref_ind].values
 
 e_star[e_star == 0] = 1e-6
-# v_star[v_star == 0] = 1e-9
+v_star[v_star == 0] = 1e-9
 y_star[y_star == 0] = 1e-6
 y[y <= 0] = 1e-6
 
@@ -115,17 +111,17 @@ assert (len(y_star[y_star <= 0]) == 0)
 en = e.divide(e_star)
 xn = x.divide(x_star)
 yn = y.divide(y_star)
-# vn = v.divide(v_star)
+vn = v.divide(v_star)
 
 # get rid of any 0 values
-# vn[vn <= 0] = 1e-6 # need to drop Nan values
+vn[vn <= 0] = 1e-6 # need to drop Nan values
 en[en <= 0] = 1e-6
 yn[yn <= 0] = 1e-6
 
 en = en.drop(ref_ind)
 xn = xn.drop(ref_ind)
 yn = yn.drop(ref_ind)
-# vn = vn.drop(ref_ind)      
+vn = vn.drop(ref_ind)      
 
 # Correct negative flux values at the reference state
 N[:, v_star < 0] = -1 * N[:, v_star < 0]
@@ -162,7 +158,7 @@ with pymc_model:
 
     # Error distributions for observed steady-state concentrations and fluxes
     
-    v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_y, sigma=0.1) # both bn and v_hat_ss are (28,6)
+    v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_x, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
     chi_obs = pm.Normal('chi_obs', mu=chi_ss, sigma=0.1, observed=xn) # chi_ss and xn is (28,4)
     y_obs = pm.Normal('y_obs', mu=y_ss, sigma=y_err, observed=yn)
     e_obs = pm.Normal('e_obs', mu=1, sigma=0.1, observed=en)
