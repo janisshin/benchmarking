@@ -145,19 +145,21 @@ with pm.Model() as pymc_model:
     Ey_t = pm.Deterministic('Ey', initialize_elasticity(-Ey.T, 'ey', b=0.05, sd=1, alpha=5))
 
 with pymc_model:
+    xn_t = pm.Normal('xn_t', mu=1, sigma=10, shape=xn.shape, initval=0.1 * np.random.randn(xn.shape[0], xn.shape[1]))
+
     # Error priors. 
     y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
 
     # Calculate steady-state concentrations and fluxes from elasticities
-    chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en.to_numpy(), yn.to_numpy())
-    y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en.to_numpy(), xn.to_numpy())
+    # chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en.to_numpy(), yn.to_numpy())
+    y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en.to_numpy(), xn_t)
 
     # Error distributions for observed steady-state concentrations and fluxes
     
     v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_y, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
-    chi_obs = pm.Normal('chi_obs', mu=chi_ss, sigma=0.1, observed=xn) # chi_ss and xn is (28,4)
-    y_obs = pm.Normal('y_obs', mu=y_ss, sigma=y_err, observed=yn)
-    e_obs = pm.Normal('e_obs', mu=1, sigma=0.1, observed=en)
+    # chi_obs = pm.Normal('chi_obs', mu=chi_ss, sigma=0.1, observed=xn) # chi_ss and xn is (28,4)
+    y_obs = pm.Normal('y_obs', mu=y_ss, sigma=y_err, observed=yn.to_numpy())
+    e_obs = pm.Normal('e_obs', mu=1, sigma=0.1, observed=en.to_numpy())
 
 with pymc_model:
     trace_prior = pm.sample_prior_predictive() 
