@@ -10,9 +10,8 @@ dataPath='data/MODEL1303260011_pt10.csv'
 
 FOLDER_NAME = 'glycolysis/'
 NOISE=False
-DATA_OMISSION_CODE = 'C-x'
+DATA_OMISSION_CODE = 'B'
 ADVI_ITERATIONS = 60000
-
 name_of_script = sys.argv[1]
 LEARNING_RATE = 1E-2
 
@@ -92,13 +91,17 @@ exRxns = [i.id for i in model.reactions if 'EX' in i.id]
 target_rxn = [i for i in exRxns if desired_product == i[3:]][0]
 desired_product = target_rxn[3:] # the internal form of the desired product
 
+model.objective = target_rxn
+sol = model.optimize()
+v_star = sol.fluxes.values
+
 e_star = e.iloc[ref_ind].values
 x_star = x.iloc[ref_ind].values
 y_star = y.iloc[ref_ind].values
-v_star = v.iloc[ref_ind].values
+# v_star = v.iloc[ref_ind].values
 
 e_star[e_star == 0] = 1e-6
-v_star[v_star == 0] = 1e-9
+# v_star[v_star == 0] = 1e-9
 y_star[y_star == 0] = 1e-6
 y[y <= 0] = 1e-6
 
@@ -111,17 +114,17 @@ assert (len(y_star[y_star <= 0]) == 0)
 en = e.divide(e_star)
 xn = x.divide(x_star)
 yn = y.divide(y_star)
-vn = v.divide(v_star)
+# vn = v.divide(v_star)
 
 # get rid of any 0 values
-vn[vn <= 0] = 1e-6 # need to drop Nan values
+# vn[vn <= 0] = 1e-6 # need to drop Nan values
 en[en <= 0] = 1e-6
 yn[yn <= 0] = 1e-6
 
 en = en.drop(ref_ind)
 xn = xn.drop(ref_ind)
 yn = yn.drop(ref_ind)
-vn = vn.drop(ref_ind)      
+# vn = vn.drop(ref_ind)      
 
 # Correct negative flux values at the reference state
 N[:, v_star < 0] = -1 * N[:, v_star < 0]
@@ -152,18 +155,16 @@ with pymc_model:
     # Error priors. 
     y_err = pm.HalfNormal('y_error', sigma=0.05, initval=.01)
 
-    en = pm.Normal('e_unmeasured', mu=1, sigma=10, shape=en.shape)
-
     # Calculate steady-state concentrations and fluxes from elasticities
-    chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en, yn.to_numpy())
-    y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en, xn.to_numpy())
+    chi_ss, vn_ss_x = ll.steady_state_aesara(Ex_t, Ey_t, en.to_numpy(), yn.to_numpy())
+    y_ss, vn_ss_y = ll.steady_state_aesara(Ey_t, Ex_t, en.to_numpy(), xn.to_numpy())
 
     # Error distributions for observed steady-state concentrations and fluxes
     
-    v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_y, sigma=0.1, observed=vn) # both bn and v_hat_ss are (28,6)
+    v_hat_obs = pm.Normal('v_hat_obs', mu=vn_ss_y, sigma=0.1) # both bn and v_hat_ss are (28,6)
     chi_obs = pm.Normal('chi_obs', mu=chi_ss, sigma=0.1, observed=xn) # chi_ss and xn is (28,4)
     y_obs = pm.Normal('y_obs', mu=y_ss, sigma=y_err, observed=yn)
-    # e_obs = pm.Normal('e_obs', mu=1, sigma=0.1, observed=en)
+    e_obs = pm.Normal('e_obs', mu=1, sigma=0.1, observed=en)
 
 with pymc_model:
     trace_prior = pm.sample_prior_predictive() 
@@ -196,7 +197,7 @@ cloudpickle.dump({'trace': trace,
 'r_labels': r_labels,
 'm_labels': m_labels,
 'y_labels': y_labels,
-'ll': ll}, file=open(f'{folder_name} + {name_of_script}_advi.pgz', "wb"))
+'ll': ll}, file=open(f'results/{name_of_script}_advi.pgz', "wb"))
 
 with sns.plotting_context('notebook', font_scale=1.2):
 
@@ -211,6 +212,6 @@ with sns.plotting_context('notebook', font_scale=1.2):
     plt.xlabel('Iteration')
     plt.title(f'{name_of_script} ELBO convergence')
     # plt.tight_layout()
-    plt.savefig(f'{name_of_script}_elbo.svg', transparent=True, dpi=200)
+    plt.savefig(f'results/{name_of_script}_elbo.svg', transparent=True, dpi=200)
 
 winsound.Beep(freq, duration)
